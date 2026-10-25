@@ -15,35 +15,50 @@ KB_PATH = ROOT / "knowledge_base.txt"
 app = FastAPI(title="The Elevation Church Ogba CareerPro Ministry Chatbot")
 app.mount("/web", StaticFiles(directory=str(WEB_DIR)), name="web")
 
+
 def load_sections():
     text = KB_PATH.read_text(encoding="utf-8")
-    # Keep the document's numbered topic headings as retrieval chunks.
-    parts = re.split(r"(?m)(?=^\d+\.\s)", text)
-    return [p.strip() for p in parts if p.strip()]
+
+    # Split the knowledge base into individual Q&A records.
+    records = re.split(r"(?m)(?=^Q:\s*)", text)
+
+    # Keep non-empty records, including introductory text.
+    return [record.strip() for record in records if record.strip()]
+
 
 SECTIONS = load_sections()
+
 
 def terms(text):
     return set(re.findall(r"[a-z0-9₦]+", text.lower()))
 
+
 def retrieve(question, limit=4):
     q_terms = terms(question)
+
     if not q_terms:
         return []
+
     scored = []
+
     for section in SECTIONS:
         s_terms = terms(section)
         overlap = len(q_terms & s_terms)
-        # Favor questions and headings containing the user's exact words.
-        heading = section.splitlines()[0] if section.splitlines() else ""
-        heading_bonus = len(q_terms & terms(heading)) * 1.8
-        score = overlap + heading_bonus
-        if score:
-            scored.append((score / (len(s_terms) ** 0.25), section))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    if not scored or scored[0][0] < 1.0:
+
+        if overlap:
+            # Give extra weight to words in the question line.
+            first_line = section.splitlines()[0] if section.splitlines() else ""
+            heading_bonus = len(q_terms & terms(first_line)) * 2
+
+            score = overlap + heading_bonus
+            scored.append((score, section))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+
+    if not scored or scored[0][0] < 1:
         return []
-    return [s for _, s in scored[:limit]]
+
+    return [section for _, section in scored[:limit]]
 
 class AskRequest(BaseModel):
     question: str
@@ -68,16 +83,22 @@ async def ask(body: AskRequest):
             "sources": []
         }
     # This answer is intentionally grounded in document excerpts only. No generative model is used for ministry Q&A.
-    excerpts = []
+      excerpts = []
+
     for section in matches:
-        # Keep each excerpt readable and avoid dumping the entire knowledge base.
-        lines = [line.strip() for line in section.splitlines() if line.strip()]
-        excerpt = "\n".join(lines[:18])
-        if len(excerpt) > 1800:
-            excerpt = excerpt[:1800].rsplit(" ", 1)[0] + "…"
+        excerpt = section.strip()
+
+        if len(excerpt) > 2500:
+            excerpt = excerpt[:2500].rsplit(" ", 1)[0] + "..."
+
         excerpts.append(excerpt)
+
     answer = "\n\n".join(excerpts)
-    return {"answer": answer, "sources": ["TEC OGBA CAREERPRO MINISTRY.docx"]}
+    return {
+        "answer": answer,
+        "sources": ["knowledge_base.txt"]
+    }
+
 
 @app.get("/api/search")
 async def job_search_info():
